@@ -4,13 +4,16 @@ import android.app.DialogFragment;
 import android.app.ListActivity;
 import android.os.AsyncTask;
 import android.os.Bundle;
-import android.support.v7.app.ActionBarActivity;
 import android.text.TextUtils;
 import android.util.Log;
+import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
+import android.view.ViewGroup;
+import android.widget.ArrayAdapter;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import org.restlet.Client;
 import org.restlet.Context;
@@ -23,32 +26,60 @@ import org.restlet.representation.Representation;
 import org.restlet.representation.Variant;
 import org.restlet.resource.ClientResource;
 
+import java.util.ArrayList;
+import java.util.List;
 
-public class MainActivity extends ActionBarActivity implements
+public class MainActivity extends ListActivity implements
         AccountDialogFragment.OnFragmentInteractionListener {
 
     private static final String TAG = "MainActivity";
-    private TextView mMainText = null;
     private ClientResource mService = null;
 
+    private List<Account> mAccounts = new ArrayList<Account>();
+    private AccountAdapter mAdapter = null;
+
     private abstract class Task {
-        public abstract String run();
+        public abstract Object run();
+    }
+
+    private class AccountAdapter extends ArrayAdapter<Account> {
+
+        public AccountAdapter(android.content.Context context) {
+            super(context, 0, mAccounts);
+        }
+
+        @Override
+        public View getView(int position, View convertView, ViewGroup parent) {
+            Account account = mAccounts.get(position);
+
+            if (null == convertView) {
+                convertView = LayoutInflater.from(getContext()).inflate(R.layout.item_account, parent, false);
+            }
+
+            TextView firstName = (TextView)convertView.findViewById(R.id.first_name);
+            TextView lastName = (TextView)convertView.findViewById(R.id.last_name);
+
+            firstName.setText(account.firstName);
+            lastName.setText(account.lastName);
+            return convertView;
+        }
     }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_main);
-
-        mMainText = (TextView)findViewById(R.id.main_text);
+//        setContentView(R.layout.activity_main);
 
         Engine.getInstance().getRegisteredConverters().add(new GsonConverter());
         Engine.getInstance().getRegisteredClients().clear();
         Engine.getInstance().getRegisteredClients().add(new HttpClientHelper(null));
 
         Client client = new Client(new Context(), Protocol.HTTP);
-        mService = new ClientResource("http://192.168.0.14:8111");
+        mService = new ClientResource("http://192.168.1.134:8111");
         mService.setNext(client);
+
+        mAdapter = new AccountAdapter(this);
+        getListView().setAdapter(mAdapter);
     }
 
     private String getRoot() {
@@ -71,16 +102,38 @@ public class MainActivity extends ActionBarActivity implements
         return accountsResource.add(representation);
     }
 
+    private Accounts getAccounts() {
+        AccountsResource accountsResource = mService.getChild("/accounts/", AccountsResource.class);
+
+        Representation representation = accountsResource.represent();
+
+        GsonConverter converter = new GsonConverter();
+        Accounts accounts = null;
+        try {
+            accounts = converter.toObject(representation, Accounts.class, null);
+        } catch (Exception exp) {
+            Log.e(TAG, "converter exception");
+        }
+
+        return accounts;
+    }
+
     private void executeTask(Task task) {
-        AsyncTask<Task, Void, String> rootTask = new AsyncTask<Task, Void, String>() {
+        AsyncTask<Task, Void, Object> rootTask = new AsyncTask<Task, Void, Object>() {
             @Override
-            protected String doInBackground(Task... tasks) {
+            protected Object doInBackground(Task... tasks) {
                 return tasks[0].run();
             }
 
             @Override
-            protected void onPostExecute(String result) {
-                mMainText.setText(result);
+            protected void onPostExecute(Object result) {
+                if (null != result) {
+                    if (result instanceof String) {
+                        Toast.makeText(MainActivity.this, (String) result, Toast.LENGTH_LONG).show();
+                    } else if (result instanceof Accounts) {
+                        mAdapter.addAll(((Accounts) result).accounts);
+                    }
+                }
             }
         };
         rootTask.execute(task, null, null);
@@ -89,7 +142,7 @@ public class MainActivity extends ActionBarActivity implements
     public void onRootClicked(View view) {
         executeTask(new Task() {
             @Override
-            public String run() {
+            public Object run() {
                 return getRoot();
             }
         });
@@ -108,8 +161,17 @@ public class MainActivity extends ActionBarActivity implements
 
         executeTask(new Task() {
             @Override
-            public String run() {
+            public Object run() {
                 return addAccount(account);
+            }
+        });
+    }
+
+    public void refreshAccount() {
+        executeTask(new Task() {
+            @Override
+            public Object run() {
+                return getAccounts();
             }
         });
     }
@@ -131,8 +193,10 @@ public class MainActivity extends ActionBarActivity implements
         //noinspection SimplifiableIfStatement
         if (id == R.id.action_settings) {
             return true;
-        } else if (id == R.id.action_accounts) {
+        } else if (id == R.id.action_plus) {
             showDialog();
+        } else if (id == R.id.action_refresh) {
+            refreshAccount();
         }
 
         return super.onOptionsItemSelected(item);
